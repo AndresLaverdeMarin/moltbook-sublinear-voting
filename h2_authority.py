@@ -33,7 +33,7 @@ CUTOFF = "2026-02-09"  # exclusive -> includes through Feb 8
 
 
 def spam_post_ids(con):
-    """Paper's two spam criteria, applied at post level (see h1_net_score.py)."""
+    """Authors' two spam criteria, applied at post level (see h1_net_score.py)."""
     df = pd.read_sql_query("SELECT post_id, content, author_id FROM comments", con)
     g = df.groupby("post_id")
     stats_ = g.agg(
@@ -44,7 +44,13 @@ def spam_post_ids(con):
     stats_ = stats_[stats_["n"] >= 5]
     frac_content = stats_["uniq_content"] / stats_["n"]
     frac_author = stats_["uniq_author"] / stats_["n"]
-    return set(stats_[(frac_content < 0.5) | (frac_author < 0.2)].index)
+    flagged = set(stats_[(frac_content < 0.5) | (frac_author < 0.2)].index)
+    high_count = con.execute(
+        "SELECT p.id FROM posts p "
+        "LEFT JOIN (SELECT DISTINCT post_id FROM comments) c ON p.id = c.post_id "
+        "WHERE c.post_id IS NULL AND p.comment_count > 200").fetchall()
+    flagged.update(r[0] for r in high_count)
+    return flagged
 
 
 # beta computed with the paper's own code (see paper_beta.py)

@@ -30,7 +30,11 @@ def load(con):
     return posts
 
 def spam_post_ids(con):
-    """Return set of post ids flagged as spam, per the paper's two criteria."""
+    """Return set of post ids flagged as spam, per the authors' get_spam_post_ids
+    (repo/analysis_scripts/figure_style.py): (1) >=5 stored comments with <50% unique
+    content OR <20% unique authors, AND (2) high-volume posts (comment_count>200) that
+    have no stored comments at all. author_id is used in place of the authors'
+    author_name -- verified to give the identical comment-pattern set on this dump."""
     df = pd.read_sql_query(
         "SELECT post_id, content, author_id FROM comments", con)
     g = df.groupby("post_id")
@@ -42,8 +46,14 @@ def spam_post_ids(con):
     stats = stats[stats["n"] >= 5]
     frac_content = stats["uniq_content"] / stats["n"]
     frac_author = stats["uniq_author"] / stats["n"]
-    flagged = stats[(frac_content < 0.5) | (frac_author < 0.2)].index
-    return set(flagged)
+    flagged = set(stats[(frac_content < 0.5) | (frac_author < 0.2)].index)
+    # authors' second criterion: high-count posts with no stored comments
+    high_count = con.execute(
+        "SELECT p.id FROM posts p "
+        "LEFT JOIN (SELECT DISTINCT post_id FROM comments) c ON p.id = c.post_id "
+        "WHERE c.post_id IS NULL AND p.comment_count > 200").fetchall()
+    flagged.update(r[0] for r in high_count)
+    return flagged
 
 # beta computed with the paper's own code (see paper_beta.py)
 from paper_beta import fit_beta

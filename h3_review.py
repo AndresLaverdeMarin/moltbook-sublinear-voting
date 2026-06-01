@@ -26,7 +26,13 @@ def spam_post_ids(con):
     g = df.groupby("post_id")
     s = g.agg(n=("content", "size"), uc=("content", "nunique"), ua=("author_id", "nunique"))
     s = s[s["n"] >= 5]
-    return set(s[((s["uc"] / s["n"]) < 0.5) | ((s["ua"] / s["n"]) < 0.2)].index)
+    flagged = set(s[((s["uc"] / s["n"]) < 0.5) | ((s["ua"] / s["n"]) < 0.2)].index)
+    high_count = con.execute(
+        "SELECT p.id FROM posts p "
+        "LEFT JOIN (SELECT DISTINCT post_id FROM comments) c ON p.id = c.post_id "
+        "WHERE c.post_id IS NULL AND p.comment_count > 200").fetchall()
+    flagged.update(r[0] for r in high_count)
+    return flagged
 
 
 def beta_dropzero(size, value):
