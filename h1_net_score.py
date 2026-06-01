@@ -74,16 +74,20 @@ def main():
     up = posts["upvotes"].to_numpy(float)
     down = posts["downvotes"].to_numpy(float)
     net = up - down
+    total = up + np.clip(down, 0, None)   # gross vote volume (total engagement)
 
     print("\n=== Vote scaling vs discussion size (H1 net-score test) ===")
     b_up, n_up = fit_beta(size, up)
-    print(f"  upvotes (reference): beta = {b_up:.3f}   [{n_up} bins]")
+    print(f"  upvotes (reference)   : beta = {b_up:.3f}   [{n_up} bins]")
 
     b_net, n_net = fit_beta(size, net)
-    print(f"  net (up-down)  : beta = {b_net:.3f}   [{n_net} bins]")
+    print(f"  net (up-down)         : beta = {b_net:.3f}   [{n_net} bins]")
+
+    b_tot, n_tot = fit_beta(size, total)
+    print(f"  total (up+down)       : beta = {b_tot:.3f}   [{n_tot} bins]")
 
     b_dn, n_dn = fit_beta(size, np.clip(down, 0, None))
-    print(f"  downvotes      : beta = {b_dn:.3f}   [{n_dn} bins]")
+    print(f"  downvotes             : beta = {b_dn:.3f}   [{n_dn} bins]")
 
     print("\n=== Vote summary ===")
     print(f"  total upvotes={up.sum():,.0f}  downvotes={down.sum():,.0f}  "

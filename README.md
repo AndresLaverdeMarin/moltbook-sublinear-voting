@@ -69,6 +69,7 @@ research gap and analysis plan.
 | Script | What it tests | Figure |
 |---|---|---|
 | `h1_net_score.py` | H1 net-score / downvote decomposition (also the baseline β) | — |
+| `h1b_downvotes.py` | H1b within-Moltbook downvote characterization (prevalence, scaling decomposition, contention) | `figures/h1b_downvotes.pdf` |
 | `h2_authority.py` | H2 authority (karma / followers) | — |
 | `h3_saturation.py` | H3 vote-vs-comment accumulation from snapshots | `figures/h3_saturation.pdf` |
 | `h4_content.py` | H4 content / contention from comment text | `figures/h4_content.pdf` |
