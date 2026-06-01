@@ -47,25 +47,8 @@ def spam_post_ids(con):
     return set(stats_[(frac_content < 0.5) | (frac_author < 0.2)].index)
 
 
-def fit_beta(size, value, nbins=25):
-    """Log-bin by size, average value per bin, fit log-log slope (>=5 pts/bin)."""
-    m = (size > 0) & (value > 0)
-    s, v = size[m], value[m]
-    if s.size < 10:
-        return np.nan, 0
-    edges = np.logspace(np.log10(s.min()), np.log10(s.max()), nbins + 1)
-    idx = np.digitize(s, edges)
-    xs, ys = [], []
-    for b in range(1, nbins + 1):
-        sel = idx == b
-        if sel.sum() >= 5:
-            xs.append(s[sel].mean())
-            ys.append(v[sel].mean())
-    if len(xs) < 5:
-        return np.nan, len(xs)
-    lx, ly = np.log10(np.array(xs)), np.log10(np.array(ys))
-    beta, _ = np.polyfit(lx, ly, 1)
-    return beta, len(xs)
+# beta computed with the paper's own code (see paper_beta.py)
+from paper_beta import fit_beta
 
 
 def ols(y, X, names):
