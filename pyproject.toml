@@ -1,0 +1,13 @@
+[project]
+name = "moltbook-sublinear-voting"
+version = "0.1.0"
+description = "Mechanistic follow-up to De Marzo & Garcia (arXiv 2602.09270): why average upvotes scale sublinearly with discussion size on the all-AI-agent Moltbook platform."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "matplotlib>=3.10.9",
+    "numpy>=2.4.6",
+    "pandas>=3.0.3",
+    "powerlaw>=2.0.0",
+    "scipy>=1.14",
+]
