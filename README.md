@@ -61,6 +61,52 @@ dataset — the sublinearity is a robust baseline property of AI-agent voting it
   and post maturity — confirming crawl-time/completeness artifacts don't contaminate size-dependent
   metrics (including the baseline β).
 
+## Robustness across datasets and time windows
+
+The baseline sublinearity and the H1–H4 verdicts were re-checked on three slices of the data:
+
+- **upload (Feb-9)** — the paper-snapshot DB (`moltbook_upload.db`), where Feb posts were crawled
+  ~0–2 days old;
+- **total (Feb-9)** — the full ~53 GB crawl restricted to the paper window: the *same* posts observed at
+  full maturity;
+- **window (≥Feb-27)** — the full crawl excluding the first month of collection (a later, disjoint
+  temporal slice; ~1 M posts).
+
+| H | metric | upload | total (Feb-9) | **window (≥Feb-27)** |
+|---|---|---|---|---|
+| **H1** | posts (after spam) | 379,878 | 379,852 | **1,006,389** |
+| | β up / net / total / down | 0.755 / .743 / .766 / 1.032 | 0.873 / .847 / .893 / 1.240 | **0.844 / .844 / .844 / 0.799** |
+| | upvotes / downvotes / share | 888,784 / 11,114 / 1.24% | 927,947 / 11,242 / 1.20% | **3,058,790 / 11,736 / 0.38%** |
+| **H1b** | posts downvoted (%) / top-1% conc. | 2.01% / 68.7% | 2.02% / 68.6% | **1.15% / 89.6%** |
+| | keep-0 = P(>0) × intensity | 1.032=.532+.460 | 1.240=.538+.571 | **0.799=.693+.089** |
+| | max downvotes on a post | 655 | 655 | **8** |
+| **H2** | posts used | 252,946 | 253,595 | **411,103** |
+| | ρ(up,size) / ρ(up,karma) | 0.499 / 0.128 | 0.501 / 0.133 | **0.397 / 0.187** |
+| | authority R² / size coef M1→M3 | 0.028 / +.424→+.427 | 0.029 / +.428→+.430 | **0.037 / +.506→+.507** |
+| | β within karma terciles (lo/mid/hi) | 0.67/0.75/0.76 | 0.73/0.84/0.83 | **0.93/0.87/0.79** |
+| **H3** | cohort posts (usable curves) | 68,429 | 164,871 | **632,242 (474,914)** |
+| | % of final by 24 h (up / com) | 98.1 / 96.3 | 98.8 / 98.2 | **99.8 / 99.0** |
+| | matched-age β, **mean** (2 h → 72 h) | 2.45 → 0.77 | 2.41 → 0.93 | **0.92 → 0.86** (no spike) |
+| | matched-age β, **median** (2 h → 72 h) | ~0.98 → 0.69 | ~0.91 → 0.93 | **~0.98 → 0.91** |
+| **H4** | posts w/ features | 247,115 | 247,803 | **408,375** |
+| | disagree ρ↑size / disagree OLS β | +0.315 / +0.029 | +0.316 / +0.029 | **+0.351 / +0.020** |
+| | OLS R² size → size+content | 0.250→0.261 | 0.253→0.263 | **0.194→0.223** |
+| | β split: consensual / contentious | 0.605 / 0.749 | 0.637 / 0.741 | **0.908 / 0.913** |
+| | β split: question lo / mid / hi | 0.802/.706/.497 | 0.786/.636/.538 | **0.374/.902/.889** |
+| **H4b** | log(size)×qfrac interaction | −0.045 | −0.045 | **+0.122** |
+| | β_up across q-rate (lo → hi decile) | 0.826 → 0.335 | 0.824 → 0.337 | **0.910 → 0.295** |
+| | upvotes/comment by q-rate (lo → hi) | −5% | −5% | **+34%** |
+| | β_up: OP-question vs not | 0.602 / 0.626 | 0.634 / 0.660 | **0.870 / 0.973** |
+| **E1** | posts <100 / w/ tree metrics | 351,475 / 138,216 | 911,868 / 236,613 | **500,393 / 87,107** |
+| | tree exponent | −0.959 | −0.949 | **−0.939** |
+| | tail upturn: mean / median-trend | +0.022 / −0.090 | +0.017 / −0.085 | **+0.017 / −0.100** |
+| | maturity exponent: young / mature | −0.982 / −0.945 | −0.964 / −0.936 | **−0.959 / −0.930** |
+
+**Takeaway:** β rises with observation maturity (0.755 → 0.873 on the *same* posts) but stays sublinear,
+and all four falsifications hold on every slice. The only finding that does **not** replicate on the
+later window is the H4b question-bait refinement (its continuous interaction flips sign), suggesting it
+was specific to the early/paper period.
+
 See [`../RESULTS.md`](../RESULTS.md) for the full run-by-run log and [`../IDEA.md`](../IDEA.md) for the
 research gap and analysis plan.
 
