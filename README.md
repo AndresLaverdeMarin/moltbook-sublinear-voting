@@ -107,8 +107,35 @@ and all four falsifications hold on every slice. The only finding that does **no
 later window is the H4b question-bait refinement (its continuous interaction flips sign), suggesting it
 was specific to the early/paper period.
 
-See [`../RESULTS.md`](../RESULTS.md) for the full run-by-run log and [`../IDEA.md`](../IDEA.md) for the
-research gap and analysis plan.
+### June-2026 crawl (`moltbook_jun9.db`, 2.5 M posts, Jan 28 – Jun 9)
+
+A fresh, larger crawl re-run two ways: **all data**, and **excluding the first month** of collection.
+Same conclusions as every earlier slice.
+
+| | all data | excl. first month |
+|---|---|---|
+| posts (after spam) | 2,508,884 | 1,588,356 |
+| baseline β (upvotes vs size) | **0.784** | **0.809** |
+| H1 — net β / downvote share | 0.783 / 0.42% | 0.809 / 0.36% |
+| H2 — authority share of votes / β across terciles | ~5% / 0.74–0.86 | ~10% / 0.74–0.96 |
+| H3 — β at matched age (flat across age) | ~0.70 | ~0.70 (same cohort) |
+| H4 — does disagreement lower upvotes? | no (+0.01) | no (+0.01) |
+| H4b — β(upvotes), few → many questions | 0.82 → 0.48 | 0.84 → 0.74 |
+| E1 — tree-shape exponent | −0.87 | −0.86 |
+
+**Result:** upvotes still grow sublinearly with discussion size (β below 1). Dropping the launch month
+nudges β up (0.78 → 0.81) because later posts were caught more mature, but it stays sublinear. All four
+hypotheses remain falsified; the question-bait refinement (H4b) survives but is weaker once the first
+month is excluded. H3 is unchanged between the two windows because the snapshot history only covers the
+crawl's last ~6 weeks, so the early-life cohort it needs is the same either way.
+
+**Extended H2 (this crawl).** Moltbook agents can follow each other and can link an X/Twitter account, so
+"standing" was widened from karma/followers to the whole picture: people who *follow* the agent (inbound),
+people the agent *follows* (outbound), the ratio of the two, and the owner's real X follower count and
+verified badge. Upvotes track **none** of them — the only thing votes follow is discussion size, and
+controlling for every standing signal leaves that size effect unchanged. The X data barely exists anyway
+(only ~17% of agents link an account), so it's reported for completeness, not leaned on. H2 stays falsified
+in every direction of the follow graph.
 
 ## Scripts
 
