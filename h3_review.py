@@ -14,8 +14,9 @@ import pandas as pd
 from paper_beta import bin_and_average, fit_power_law, fit_beta
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-DB = os.path.join(HERE, "..", "moltbook_upload.db")
-CUTOFF = "2026-02-09"
+DB = os.environ.get("MOLTBOOK_DB", os.path.join(HERE, "..", "moltbook_upload.db"))
+START  = os.environ.get("MOLTBOOK_START", "1970-01-01")    # inclusive lower bound on created_at
+CUTOFF = os.environ.get("MOLTBOOK_CUTOFF", "2026-02-09")   # exclusive upper bound (default: through Feb 8)
 FIRST_AGE_MAX = 6.0
 HORIZON = 72.0
 GRID = np.array([2, 4, 6, 9, 12, 18, 24, 36, 48, 60, 72], float)
@@ -88,12 +89,16 @@ def beta_minpop(size, value, min_n=100, x_min=2, num_bins=30):
 
 def build_cohort_curves():
     con = sqlite3.connect(DB)
+    con.execute("PRAGMA cache_size=-4000000")    # ~4 GB page cache
+    con.execute("PRAGMA mmap_size=30000000000")  # 30 GB memory-mapped reads
+    con.execute("PRAGMA temp_store=FILE")        # spill GROUP BY sort to SQLITE_TMPDIR (disk)
     print("Loading posts + snapshot coverage...")
     posts = pd.read_sql_query(
-        f"SELECT id, created_at FROM posts WHERE created_at < '{CUTOFF}'", con)
+        f"SELECT id, created_at FROM posts "
+        f"WHERE created_at >= '{START}' AND created_at < '{CUTOFF}'", con)
     agg = pd.read_sql_query(
         "SELECT post_id, COUNT(*) n, MIN(recorded_at) first_rec, "
-        "MAX(recorded_at) last_rec FROM post_snapshots GROUP BY post_id", con)
+        "MAX(recorded_at) last_rec FROM post_snapshots NOT INDEXED GROUP BY post_id", con)
     print("Computing spam filter (reads all comments)...")
     spam = spam_post_ids(con)
 
@@ -107,11 +112,16 @@ def build_cohort_curves():
     print(f"  cohort posts: {len(cohort):,}")
     cohort_ids = set(cohort["id"])
 
-    con.execute("CREATE TEMP TABLE cohort(pid TEXT PRIMARY KEY)")
-    con.executemany("INSERT INTO cohort VALUES (?)", [(i,) for i in cohort_ids])
+    # per-post early-life snapshot bound = creation date + 7 days (day-granular recorded_at, so a
+    # lexicographic string compare == chronological). Keeps the 72h-grid curves identical for any
+    # created_at window while dropping each post's later snapshots.
+    cutdate = (cohort["created_at"] + pd.Timedelta(days=7)).dt.strftime("%Y-%m-%d")
+    con.execute("CREATE TEMP TABLE cohort(pid TEXT PRIMARY KEY, cutdate TEXT)")
+    con.executemany("INSERT INTO cohort VALUES (?,?)", list(zip(cohort["id"], cutdate)))
     snaps = pd.read_sql_query(
         "SELECT s.post_id, s.upvotes, s.comment_count, s.recorded_at "
-        "FROM post_snapshots s JOIN cohort c ON s.post_id = c.pid", con)
+        "FROM post_snapshots s JOIN cohort c ON s.post_id = c.pid "
+        "WHERE s.recorded_at <= c.cutdate", con)
     con.close()
 
     snaps["recorded_at"] = pd.to_datetime(snaps["recorded_at"], utc=True)

@@ -38,9 +38,10 @@ import matplotlib.pyplot as plt
 from scipy import stats
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-DB = os.path.join(HERE, "..", "moltbook_upload.db")
-FIGDIR = os.path.join(HERE, "figures")
-CUTOFF = "2026-02-09"
+DB = os.environ.get("MOLTBOOK_DB", os.path.join(HERE, "..", "moltbook_upload.db"))
+FIGDIR = os.environ.get("MOLTBOOK_FIGDIR", os.path.join(HERE, "figures"))
+START  = os.environ.get("MOLTBOOK_START", "1970-01-01")    # inclusive lower bound on created_at
+CUTOFF = os.environ.get("MOLTBOOK_CUTOFF", "2026-02-09")   # exclusive upper bound (default: through Feb 8)
 
 # distinctive lexicons (word-boundary, lowercased). Common words like bare
 # "no"/"not"/"but" are excluded to keep discrimination across posts.
@@ -91,7 +92,7 @@ def main():
     posts = pd.read_sql_query(
         f"SELECT id, upvotes, comment_count, LENGTH(content) plen, "
         f"(instr(lower(content),'?')>0) post_q "
-        f"FROM posts WHERE created_at < '{CUTOFF}' "
+        f"FROM posts WHERE created_at >= '{START}' AND created_at < '{CUTOFF}' "
         f"AND comment_count > 0 AND comment_count < 100", con)
     print(f"  posts (<100 comments, <=Feb8): {len(posts):,}")
 

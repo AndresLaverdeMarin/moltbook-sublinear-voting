@@ -20,13 +20,14 @@ import numpy as np
 import pandas as pd
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-DB = os.path.join(HERE, "..", "moltbook_upload.db")
-CUTOFF = "2026-02-09"  # exclusive upper bound -> includes through Feb 8
+DB = os.environ.get("MOLTBOOK_DB", os.path.join(HERE, "..", "moltbook_upload.db"))
+START  = os.environ.get("MOLTBOOK_START", "1970-01-01")    # inclusive lower bound on created_at
+CUTOFF = os.environ.get("MOLTBOOK_CUTOFF", "2026-02-09")   # exclusive upper bound (default: through Feb 8)
 
 def load(con):
     posts = pd.read_sql_query(
         f"SELECT id, author_id, upvotes, downvotes, comment_count, created_at "
-        f"FROM posts WHERE created_at < '{CUTOFF}'", con)
+        f"FROM posts WHERE created_at >= '{START}' AND created_at < '{CUTOFF}'", con)
     return posts
 
 def spam_post_ids(con):

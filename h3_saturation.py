@@ -34,9 +34,10 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-DB = os.path.join(HERE, "..", "moltbook_upload.db")
-FIGDIR = os.path.join(HERE, "figures")
-CUTOFF = "2026-02-09"            # exclusive -> through Feb 8
+DB = os.environ.get("MOLTBOOK_DB", os.path.join(HERE, "..", "moltbook_upload.db"))
+FIGDIR = os.environ.get("MOLTBOOK_FIGDIR", os.path.join(HERE, "figures"))
+START  = os.environ.get("MOLTBOOK_START", "1970-01-01")    # inclusive lower bound on created_at
+CUTOFF = os.environ.get("MOLTBOOK_CUTOFF", "2026-02-09")   # exclusive upper bound (default: through Feb 8)
 FIRST_AGE_MAX = 6.0             # caught within 6h of birth
 HORIZON = 72.0                 # reference "final" age (3 days)
 GRID = np.array([2, 4, 6, 9, 12, 18, 24, 36, 48, 60, 72], float)
@@ -63,13 +64,19 @@ from paper_beta import fit_beta
 
 def main():
     con = sqlite3.connect(DB)
+    # perf: big page-cache + mmap so the full-table snapshot aggregation over the
+    # 53GB total DB runs as a sequential scan in minutes, not the slow per-row index path.
+    con.execute("PRAGMA cache_size=-4000000")    # ~4 GB page cache
+    con.execute("PRAGMA mmap_size=30000000000")  # 30 GB memory-mapped reads
+    con.execute("PRAGMA temp_store=FILE")        # spill GROUP BY sort to SQLITE_TMPDIR (disk)
 
     print("Loading posts + snapshot coverage...")
     posts = pd.read_sql_query(
-        f"SELECT id, created_at FROM posts WHERE created_at < '{CUTOFF}'", con)
+        f"SELECT id, created_at FROM posts "
+        f"WHERE created_at >= '{START}' AND created_at < '{CUTOFF}'", con)
     agg = pd.read_sql_query(
         "SELECT post_id, COUNT(*) n, MIN(recorded_at) first_rec, "
-        "MAX(recorded_at) last_rec FROM post_snapshots GROUP BY post_id", con)
+        "MAX(recorded_at) last_rec FROM post_snapshots NOT INDEXED GROUP BY post_id", con)
 
     print("Computing spam filter (reads all comments)...")
     spam = spam_post_ids(con)
@@ -87,12 +94,18 @@ def main():
           f"{len(cohort):,}")
     cohort_ids = set(cohort["id"])
 
-    # pull only cohort snapshots via a temp-table join (keeps memory small)
-    con.execute("CREATE TEMP TABLE cohort(pid TEXT PRIMARY KEY)")
-    con.executemany("INSERT INTO cohort VALUES (?)", [(i,) for i in cohort_ids])
+    # pull only each cohort post's early-life snapshots via a temp-table join, bounded to a
+    # per-post cutoff = creation date + 7 days (well past the 72h horizon). recorded_at on the
+    # total DB is day-granular ('YYYY-MM-DD'), so a lexicographic string compare == chronological.
+    # Keeps the 72h-grid interpolation identical for ANY created_at window while dropping each
+    # post's later snapshots that a wide total-DB window would otherwise pull in bulk (-> OOM).
+    cutdate = (cohort["created_at"] + pd.Timedelta(days=7)).dt.strftime("%Y-%m-%d")
+    con.execute("CREATE TEMP TABLE cohort(pid TEXT PRIMARY KEY, cutdate TEXT)")
+    con.executemany("INSERT INTO cohort VALUES (?,?)", list(zip(cohort["id"], cutdate)))
     snaps = pd.read_sql_query(
         "SELECT s.post_id, s.upvotes, s.comment_count, s.recorded_at "
-        "FROM post_snapshots s JOIN cohort c ON s.post_id = c.pid", con)
+        "FROM post_snapshots s JOIN cohort c ON s.post_id = c.pid "
+        "WHERE s.recorded_at <= c.cutdate", con)
     con.close()
     print(f"  cohort snapshot rows: {len(snaps):,}")
 

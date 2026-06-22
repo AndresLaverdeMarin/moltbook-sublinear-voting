@@ -32,9 +32,10 @@ import matplotlib.pyplot as plt
 from scipy import stats
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-DB = os.path.join(HERE, "..", "moltbook_upload.db")
-FIGDIR = os.path.join(HERE, "figures")
-CUTOFF = "2026-02-09"
+DB = os.environ.get("MOLTBOOK_DB", os.path.join(HERE, "..", "moltbook_upload.db"))
+FIGDIR = os.environ.get("MOLTBOOK_FIGDIR", os.path.join(HERE, "figures"))
+START  = os.environ.get("MOLTBOOK_START", "1970-01-01")    # inclusive lower bound on created_at
+CUTOFF = os.environ.get("MOLTBOOK_CUTOFF", "2026-02-09")   # exclusive upper bound (default: through Feb 8)
 
 
 def spam_post_ids(con):
@@ -62,7 +63,7 @@ def main():
     print("Loading <100-comment posts...")
     posts = pd.read_sql_query(
         f"SELECT id, upvotes, comment_count, (instr(content,'?')>0) post_q "
-        f"FROM posts WHERE created_at < '{CUTOFF}' "
+        f"FROM posts WHERE created_at >= '{START}' AND created_at < '{CUTOFF}' "
         f"AND comment_count > 0 AND comment_count < 100", con)
     print(f"  posts: {len(posts):,}")
 

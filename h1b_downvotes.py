@@ -27,9 +27,10 @@ import matplotlib.pyplot as plt
 from paper_beta import fit_beta, bin_and_average, fit_power_law
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-DB = os.path.join(HERE, "..", "moltbook_upload.db")
-FIGDIR = os.path.join(HERE, "figures")
-CUTOFF = "2026-02-09"  # exclusive -> through Feb 8
+DB = os.environ.get("MOLTBOOK_DB", os.path.join(HERE, "..", "moltbook_upload.db"))
+FIGDIR = os.environ.get("MOLTBOOK_FIGDIR", os.path.join(HERE, "figures"))
+START  = os.environ.get("MOLTBOOK_START", "1970-01-01")    # inclusive lower bound on created_at
+CUTOFF = os.environ.get("MOLTBOOK_CUTOFF", "2026-02-09")   # exclusive upper bound (default: through Feb 8)
 
 # Figure styling mirrored from repo/analysis_scripts/figure_style.py (Fig 3a look)
 COLORS = {"blue": "#0077BB", "orange": "#EE7733", "green": "#009988",
@@ -152,7 +153,7 @@ def main():
     print("Loading posts...")
     posts = pd.read_sql_query(
         f"SELECT id, upvotes, downvotes, comment_count FROM posts "
-        f"WHERE created_at < '{CUTOFF}'", con)
+        f"WHERE created_at >= '{START}' AND created_at < '{CUTOFF}'", con)
     print(f"  posts (<= Feb 8): {len(posts):,}")
 
     print("Computing spam filter (reads all comments)...")

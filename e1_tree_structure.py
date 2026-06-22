@@ -33,8 +33,10 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-DB = os.path.join(HERE, "..", "moltbook_upload.db")
-FIGDIR = os.path.join(HERE, "figures")
+DB = os.environ.get("MOLTBOOK_DB", os.path.join(HERE, "..", "moltbook_upload.db"))
+FIGDIR = os.environ.get("MOLTBOOK_FIGDIR", os.path.join(HERE, "figures"))
+START  = os.environ.get("MOLTBOOK_START", "1970-01-01")    # inclusive lower bound on created_at
+CUTOFF = os.environ.get("MOLTBOOK_CUTOFF", "2100-01-01")   # exclusive upper bound (default: all dates)
 MIN_STORED = 5
 NBINS = 15
 
@@ -81,12 +83,15 @@ def fit_exp(x, y):
 
 def main():
     con = sqlite3.connect(DB)
-    con.execute("PRAGMA temp_store=MEMORY")
+    con.execute("PRAGMA cache_size=-4000000")    # ~4 GB page cache
+    con.execute("PRAGMA mmap_size=30000000000")  # 30 GB memory-mapped reads
+    con.execute("PRAGMA temp_store=FILE")        # spill GROUP BY sort to SQLITE_TMPDIR (disk)
 
     print("Loading <100-comment posts...")
     posts = pd.read_sql_query(
-        "SELECT id, comment_count, created_at FROM posts "
-        "WHERE comment_count > 0 AND comment_count < 100", con)
+        f"SELECT id, comment_count, created_at FROM posts "
+        f"WHERE created_at >= '{START}' AND created_at < '{CUTOFF}' "
+        f"AND comment_count > 0 AND comment_count < 100", con)
     print(f"  posts (<100 API comments): {len(posts):,}")
 
     print("Computing spam filter...")
@@ -107,9 +112,13 @@ def main():
 
     # snapshot age at crawl (last recorded - created)
     print("Loading snapshot coverage for maturity...")
+    # Full sequential scan over all post_snapshots (NOT INDEXED) instead of a per-post
+    # index join over the ~2.4M-post subset: a sequential scan + sort finishes in minutes
+    # on the 53GB total DB, whereas the random-access join touches most of the 338M rows.
+    # The downstream left-merge keeps only subset posts, so the result is identical.
     sl = pd.read_sql_query(
-        "SELECT s.post_id, MAX(s.recorded_at) last_rec FROM post_snapshots s "
-        "JOIN subset s2 ON s.post_id=s2.pid GROUP BY s.post_id", con)
+        "SELECT post_id, MAX(recorded_at) last_rec FROM post_snapshots NOT INDEXED "
+        "GROUP BY post_id", con)
     con.close()
 
     df = posts.merge(met, left_on="id", right_index=True, how="inner")
@@ -142,17 +151,21 @@ def main():
           f"median-trend={ (np.log10(ymed[-3:])-np.log10(p_all*cen[-3:]**e_all)).mean():+.3f}")
     print(f"  -> if median-trend upturn << mean upturn, it's a small-n/skew artifact\n")
 
-    # ---- (b) crawl-window sensitivity ----
-    print("=== (b) crawl-window sensitivity (created_at <) ===")
-    windows = {"<Feb04": "2026-02-04", "<Feb06": "2026-02-06",
-               "<Feb08": "2026-02-08", "full": "2026-02-10"}
+    # ---- (b) crawl-window sensitivity (cumulative; cuts derived from the data window) ----
+    print("=== (b) crawl-window sensitivity (cumulative created_at <) ===")
+    cmin, cmax = df["created_at"].min(), df["created_at"].max()
+    span = cmax - cmin
+    cuts = [cmin + span * f for f in (0.4, 0.6, 0.8)] + [cmax + pd.Timedelta(days=1)]
     win_curves = {}
-    for name, cut in windows.items():
-        sub = df[df["created_at"] < pd.Timestamp(cut, tz="UTC")]
+    for cut in cuts:
+        name = "<" + cut.strftime("%m-%d")
+        sub = df[df["created_at"] < cut]
+        if len(sub) < 50:
+            continue
         c, y, k = trend(sub["nw"].to_numpy(), sub["nd"].to_numpy())
         e, _ = fit_exp(c, y)
         win_curves[name] = (c, y, k)
-        print(f"  {name:7s}: n={len(sub):>7,}  exponent={e:+.3f}  bins={len(c)}")
+        print(f"  {name:8s}: n={len(sub):>7,}  exponent={e:+.3f}  bins={len(c)}")
     print()
 
     # ---- (c) maturity (right-censoring test) ----
