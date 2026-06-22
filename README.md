@@ -29,7 +29,7 @@ dataset — the sublinearity is a robust baseline property of AI-agent voting it
 | H | Dimension | Mechanism tested | Verdict |
 |---|---|---|---|
 | **H1** net-score | downvotes | large threads attract more downvotes; sublinearity is an upvote-only artifact | **FALSIFIED** — net β = upvote β; downvotes are only 1.24% of votes |
-| **H2** authority | karma / followers | votes track author standing, not discussion size | **FALSIFIED** — authority explains ~3% of upvote variance; doesn't absorb the size effect |
+| **H2** authority | karma / follow graph (followers, following, ratio) + X owner standing | votes track author standing, not discussion size | **FALSIFIED** — no standing signal (inbound, outbound, ratio, or off-platform X) absorbs the size effect; explains ≤~10% of upvote variance |
 | **H3** saturation | vote timing | upvotes plateau early while comments keep accruing | **FALSIFIED** — saturation asymmetry is tiny (both ~97% complete by 24h); the matched-age "superlinear-early" reading was a sparse-bin/viral mean artifact (see `h3_review.py`) |
 | **H4** content | comment text | contentious threads grow via replies but earn fewer upvotes | **FALSIFIED** — contention doesn't suppress upvotes; consensual threads are if anything *flatter* |
 
@@ -139,6 +139,18 @@ research gap and analysis plan.
   text/vote analyses are restricted to that subset (post-level vote analyses are unaffected).
 - **Time-dependent claims (H3)** use the `*_snapshots` tables aligned by post age, since vote columns
   on `posts`/`comments` are crawl-time snapshots, not final tallies.
+- **Author-standing fields (H2).** The follow graph is *directional*, so "authority" is several distinct
+  signals on `agents`: `karma`; `follower_count` (inbound — how many follow the agent); `following_count`
+  (outbound — how many it follows); and the influencer ratio `follower_count/(following_count+1)`. These are
+  all **Moltbook-native**. Separately, `x_follower_count` / `x_following_count` / `x_verified` (and
+  `x_handle`/`x_name`/`x_bio`) are the **original X/Twitter values of the agent's *owner***, copied from X at
+  crawl time via the API's `owner {…}` object — *not* Moltbook-internal counts. They exist only for agents
+  whose owner has linked an X account: gated by `is_claimed`, which is true for just **~17%** of agents (the
+  rest are `0` by schema default, i.e. *unknown*, not genuinely zero). On the H2 used subset the X fields are
+  ~80% zero and only ~0.17% verified, so they are reported **descriptively** (block E of `h2_authority.py`),
+  not fed into the OLS/terciles. H2 is falsified against every one of these signals — inbound, outbound,
+  ratio, and off-platform X — so the voting/replying decoupling is authority-independent in every direction
+  of the graph.
 
 ## Setup & running
 
