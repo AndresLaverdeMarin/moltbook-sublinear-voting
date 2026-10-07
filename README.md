@@ -150,6 +150,7 @@ in every direction of the follow graph.
 | `e1_tree_structure.py` | E1 tree-structure tail upturn & crawl-window sensitivity | `figures/e1_tree_structure.pdf` |
 | `h3_review.py` | H3 robustness check (matched-age β: mean vs median vs drop-zero) | — |
 | `paper_beta.py` | the authors' β-fit code (`bin_and_average` + `fit_power_law`), used by all scripts | — |
+| `plot_style.py` | the figure style of the authors' main figures (font, font sizes, colors, 10 in width), used by the five figure scripts | — |
 
 ## Methodology (kept comparable to the paper)
 
