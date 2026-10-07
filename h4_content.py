@@ -56,7 +56,18 @@ RE_AGR = re.compile(r"\b(?:%s)\b" % "|".join(map(re.escape, AGREE)))
 
 
 def spam_post_ids(con):
-    df = pd.read_sql_query("SELECT post_id, content, author_id FROM comments", con)
+    # Read the comments in chunks. Keep a 64-bit hash of each text and author, not the
+    # string, because the text of all comments does not fit in memory on the large DBs.
+    # Copy post_id: the column is a view that keeps the full chunk in memory.
+    def _hash(s):
+        return pd.util.hash_pandas_object(s, index=False).astype("UInt64").mask(s.isna())
+    parts = [pd.DataFrame({"post_id": ch["post_id"].copy(),
+                           "content": _hash(ch["content"]),
+                           "author_id": _hash(ch["author_id"])})
+             for ch in pd.read_sql_query("SELECT post_id, content, author_id FROM comments",
+                                         con, chunksize=1_000_000)]
+    df = pd.concat(parts, ignore_index=True)
+    del parts
     g = df.groupby("post_id")
     s = g.agg(n=("content", "size"), uc=("content", "nunique"),
               ua=("author_id", "nunique"))
@@ -72,6 +83,8 @@ def spam_post_ids(con):
 
 # beta computed with the paper's own code (see paper_beta.py)
 from paper_beta import fit_beta
+# figure style of the paper's main figures (see plot_style.py)
+from plot_style import setup_style, add_panel_label, COLORS, FIG_WIDTH
 
 
 def ols_std(y, X, names):
@@ -187,29 +200,33 @@ def main():
           "   contentious/high-disagreement flatter. If beta ~equal -> H4 fails)")
 
     # ---- figure ----
-    fig, ax = plt.subplots(1, 2, figsize=(11, 4.2))
+    setup_style()
+    fig, ax = plt.subplots(1, 2, figsize=(FIG_WIDTH, 4.5))
     # (a) feature vs size, log-binned means
     edges = np.logspace(0, np.log10(size.max()), 16)
     idx = np.digitize(size, edges)
     xs = [size[idx == b].mean() for b in range(1, 16) if (idx == b).sum() >= 20]
-    for f, col in [("disagree_frac", "#d62728"), ("agree_frac", "#2ca02c"),
-                   ("question_frac", "#1f77b4")]:
+    for f, lab, col in [("disagree_frac", "Disagreement", COLORS["red"]),
+                        ("agree_frac", "Agreement", COLORS["green"]),
+                        ("question_frac", "Question", COLORS["blue"])]:
         ys = [df[f].to_numpy()[idx == b].mean() for b in range(1, 16) if (idx == b).sum() >= 20]
-        ax[0].plot(xs, ys, "o-", label=f, color=col)
-    ax[0].set(xscale="log", xlabel="discussion size (comment_count)",
-              ylabel="mean feature", title="(a) content vs size")
-    ax[0].legend(); ax[0].grid(alpha=.3)
+        ax[0].plot(xs, ys, "o-", label=lab, color=col)
+    ax[0].set(xscale="log", xlabel="Discussion tree size (comments)",
+              ylabel="Mean fraction of comments", title="Comment content by discussion size")
+    ax[0].legend(); ax[0].grid(alpha=.3); add_panel_label(ax[0], "a")
     # (b) split beta bars
     cons = df["consensus"].to_numpy()
     qs = np.quantile(cons, [1/3, 2/3])
-    groups = {"contentious": cons <= qs[0], "neutral": (cons > qs[0]) & (cons <= qs[1]),
-              "consensual": cons > qs[1]}
+    groups = {"Contentious": cons <= qs[0], "Neutral": (cons > qs[0]) & (cons <= qs[1]),
+              "Consensual": cons > qs[1]}
     bs = [fit_beta(size[m], up[m])[0] for m in groups.values()]
-    ax[1].bar(list(groups), bs, color=["#d62728", "#999999", "#2ca02c"])
-    ax[1].axhline(b_full, ls="--", color="black", label=f"full {b_full:.2f}")
-    ax[1].axhline(1.0, ls=":", color="grey", label="linear")
-    ax[1].set(ylabel="beta (upvotes vs size)", title="(b) split-beta by consensus")
-    ax[1].legend(); ax[1].grid(alpha=.3, axis="y")
+    ax[1].bar(list(groups), bs, color=[COLORS["red"], COLORS["grey"], COLORS["green"]])
+    ax[1].axhline(b_full, ls="--", color=COLORS["black"], label=f"All posts (β = {b_full:.2f})")
+    ax[1].axhline(1.0, ls=":", color=COLORS["black"], label="Linear (β = 1)")
+    ax[1].set(xlabel="Consensus tercile", ylabel="Exponent β (upvotes vs size)",
+              title="Exponent β by consensus",
+              ylim=(0, 1.25 * max(1.0, np.nanmax(bs))))  # space for the legend above β = 1
+    ax[1].legend(); ax[1].grid(alpha=.3, axis="y"); add_panel_label(ax[1], "b")
     fig.tight_layout()
     os.makedirs(FIGDIR, exist_ok=True)
     out = os.path.join(FIGDIR, "h4_content.pdf")

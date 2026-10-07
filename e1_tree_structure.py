@@ -32,6 +32,9 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
+# figure style of the paper's main figures (see plot_style.py)
+from plot_style import setup_style, add_panel_label, COLORS, COLOR_SEQUENCE, FIG_WIDTH
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 DB = os.environ.get("MOLTBOOK_DB", os.path.join(HERE, "..", "moltbook_upload.db"))
 FIGDIR = os.environ.get("MOLTBOOK_FIGDIR", os.path.join(HERE, "figures"))
@@ -42,7 +45,18 @@ NBINS = 15
 
 
 def spam_post_ids(con):
-    df = pd.read_sql_query("SELECT post_id, content, author_id FROM comments", con)
+    # Read the comments in chunks. Keep a 64-bit hash of each text and author, not the
+    # string, because the text of all comments does not fit in memory on the large DBs.
+    # Copy post_id: the column is a view that keeps the full chunk in memory.
+    def _hash(s):
+        return pd.util.hash_pandas_object(s, index=False).astype("UInt64").mask(s.isna())
+    parts = [pd.DataFrame({"post_id": ch["post_id"].copy(),
+                           "content": _hash(ch["content"]),
+                           "author_id": _hash(ch["author_id"])})
+             for ch in pd.read_sql_query("SELECT post_id, content, author_id FROM comments",
+                                         con, chunksize=1_000_000)]
+    df = pd.concat(parts, ignore_index=True)
+    del parts
     g = df.groupby("post_id")
     s = g.agg(n=("content", "size"), uc=("content", "nunique"),
               ua=("author_id", "nunique"))
@@ -156,7 +170,7 @@ def main():
     cmin, cmax = df["created_at"].min(), df["created_at"].max()
     span = cmax - cmin
     cuts = [cmin + span * f for f in (0.4, 0.6, 0.8)] + [cmax + pd.Timedelta(days=1)]
-    win_curves = {}
+    win_curves, win_labels = {}, {}
     for cut in cuts:
         name = "<" + cut.strftime("%m-%d")
         sub = df[df["created_at"] < cut]
@@ -165,6 +179,7 @@ def main():
         c, y, k = trend(sub["nw"].to_numpy(), sub["nd"].to_numpy())
         e, _ = fit_exp(c, y)
         win_curves[name] = (c, y, k)
+        win_labels[name] = "All posts" if cut > cmax else f"Before {cut:%b} {cut.day}"
         print(f"  {name:8s}: n={len(sub):>7,}  exponent={e:+.3f}  bins={len(c)}")
     print()
 
@@ -188,49 +203,57 @@ def main():
     # ---- (d) cap-proximity (incompleteness test) ----
     print("=== (d) cap-proximity: upturn by comment_count band ===")
     bands = [(5, 25), (25, 50), (50, 75), (75, 100)]
-    cap_curves = {}
+    cap_curves, cap_labels = {}, {}
     for lo, hi in bands:
         sub = df[(df["comment_count"] >= lo) & (df["comment_count"] < hi)]
         c, y, k = trend(sub["nw"].to_numpy(), sub["nd"].to_numpy())
         e, _ = fit_exp(c, y) if len(c) >= 3 else (np.nan, np.nan)
         cap_curves[f"{lo}-{hi}"] = (c, y)
+        cap_labels[f"{lo}-{hi}"] = f"{lo}–{hi - 1} comments"
         print(f"  comment_count {lo:>2}-{hi:<3}: n={len(sub):>7,}  exponent={e:+.3f}  "
               f"max norm_width={sub['nw'].max():.2f}")
     print("  -> if the high-norm_width tail is populated only by near-cap posts,\n"
           "     the upturn is tree-incompleteness near the 100-comment limit\n")
 
     # ---- figure (2x2) ----
-    fig, ax = plt.subplots(2, 2, figsize=(12, 9))
+    setup_style()
+    fig, ax = plt.subplots(2, 2, figsize=(FIG_WIDTH, 8.5))
+    xlab, ylab = "Normalized width (w/√n)", "Normalized depth (d/√n)"
     # (a)
     a = ax[0, 0]
-    a.loglog(cen, ym, "o-", color="#1f77b4", label="mean d/√n")
-    a.loglog(cen, ymed, "s--", color="#9467bd", label="median d/√n")
+    a.loglog(cen, ym, "o-", color=COLORS["blue"], label="Mean")
+    a.loglog(cen, ymed, "s--", color=COLORS["purple"], label="Median")
     xf = np.logspace(np.log10(cen.min()), np.log10(cen.max()), 50)
-    a.loglog(xf, p_all * xf ** e_all, ":", color="grey", label=f"fit ^{e_all:.2f}")
+    a.loglog(xf, p_all * xf ** e_all, ":", color=COLORS["grey"], linewidth=2,
+             label=f"Power-law fit (exponent {e_all:.2f})".replace(" -", " −"))
+    # vertical counts above the points, so that the counts of adjacent bins do not overlap
     for c, y, k in zip(cen, ym, cnt):
-        a.annotate(str(k), (c, y), fontsize=6, ha="center", va="bottom")
-    a.set(xlabel="norm width w/√n", ylabel="norm depth d/√n",
-          title="(a) Fig 4a reproduced (bin counts annotated)")
-    a.legend(fontsize=8); a.grid(alpha=.3, which="both")
+        a.annotate(f"{k:,}", (c, y), xytext=(0, 5), textcoords="offset points",
+                   fontsize=8, ha="center", va="bottom", rotation=90)
+    a.set(xlabel=xlab, ylabel=ylab, title="Figure 4a, with posts per bin")
+    a.set_ylim(top=a.get_ylim()[1] * 2)    # space for the counts of the first bins
+    a.legend(); a.grid(alpha=.3, which="both"); add_panel_label(a, "a")
     # (b)
     b = ax[0, 1]
-    for name, (c, y, k) in win_curves.items():
-        b.loglog(c, y, "o-", label=name, alpha=.8)
-    b.set(xlabel="norm width w/√n", ylabel="norm depth d/√n",
-          title="(b) crawl-window sensitivity"); b.legend(fontsize=8); b.grid(alpha=.3, which="both")
+    for i, (name, (c, y, k)) in enumerate(win_curves.items()):
+        b.loglog(c, y, "o-", color=COLOR_SEQUENCE[i], label=win_labels[name], alpha=.8)
+    b.set(xlabel=xlab, ylabel=ylab, title="Cumulative crawl windows")
+    b.legend(); b.grid(alpha=.3, which="both"); add_panel_label(b, "b")
     # (c)
+    mat_labels = {"all": "All posts", "young <24h": "Young (< 24 h)",
+                  "mature >=72h": "Mature (≥ 72 h)"}
     cc = ax[1, 0]
-    for name, (c, y) in mat_curves.items():
-        cc.loglog(c, y, "o-", label=name, alpha=.8)
-    cc.set(xlabel="norm width w/√n", ylabel="norm depth d/√n",
-           title="(c) maturity (right-censoring)"); cc.legend(fontsize=8); cc.grid(alpha=.3, which="both")
+    for i, (name, (c, y)) in enumerate(mat_curves.items()):
+        cc.loglog(c, y, "o-", color=COLOR_SEQUENCE[i], label=mat_labels[name], alpha=.8)
+    cc.set(xlabel=xlab, ylabel=ylab, title="Post maturity")
+    cc.legend(); cc.grid(alpha=.3, which="both"); add_panel_label(cc, "c")
     # (d)
     dd = ax[1, 1]
-    for name, (c, y) in cap_curves.items():
+    for i, (name, (c, y)) in enumerate(cap_curves.items()):
         if len(c):
-            dd.loglog(c, y, "o-", label=f"cc {name}", alpha=.8)
-    dd.set(xlabel="norm width w/√n", ylabel="norm depth d/√n",
-           title="(d) cap-proximity (incompleteness)"); dd.legend(fontsize=8); dd.grid(alpha=.3, which="both")
+            dd.loglog(c, y, "o-", color=COLOR_SEQUENCE[i], label=cap_labels[name], alpha=.8)
+    dd.set(xlabel=xlab, ylabel=ylab, title="Distance to the 100-comment cap")
+    dd.legend(); dd.grid(alpha=.3, which="both"); add_panel_label(dd, "d")
     fig.tight_layout()
     os.makedirs(FIGDIR, exist_ok=True)
     out = os.path.join(FIGDIR, "e1_tree_structure.pdf")

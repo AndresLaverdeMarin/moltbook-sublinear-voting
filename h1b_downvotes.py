@@ -32,26 +32,9 @@ FIGDIR = os.environ.get("MOLTBOOK_FIGDIR", os.path.join(HERE, "figures"))
 START  = os.environ.get("MOLTBOOK_START", "1970-01-01")    # inclusive lower bound on created_at
 CUTOFF = os.environ.get("MOLTBOOK_CUTOFF", "2026-02-09")   # exclusive upper bound (default: through Feb 8)
 
-# Figure styling mirrored from repo/analysis_scripts/figure_style.py (Fig 3a look)
-COLORS = {"blue": "#0077BB", "orange": "#EE7733", "green": "#009988",
-          "red": "#CC3311", "grey": "#BBBBBB"}
-
-
-def _style():
-    plt.rcParams.update({"font.size": 10, "axes.labelsize": 11, "axes.titlesize": 12,
-                         "legend.fontsize": 8, "axes.spines.top": False,
-                         "axes.spines.right": False, "savefig.dpi": 300})
-
-
-def _log_axes(ax):
-    ax.set_xscale("log"); ax.set_yscale("log")
-    ax.grid(True, which="major", alpha=0.3, linewidth=0.5)
-    ax.grid(True, which="minor", alpha=0.15, linewidth=0.3)
-
-
-def _panel(ax, label):
-    ax.text(-0.12, 1.08, label, transform=ax.transAxes, fontsize=14,
-            fontweight="bold", va="top", ha="left")
+# figure style of the paper's main figures (see plot_style.py)
+from plot_style import (setup_style, add_panel_label, format_axis_log, plain_log_ticks,
+                        COLORS, QUANTITY_COLORS, FIG_WIDTH)
 
 
 def _fitline(ax, x, y, color, x_min=2):
@@ -68,7 +51,18 @@ def _fitline(ax, x, y, color, x_min=2):
 
 def spam_post_ids(con):
     """Authors' two spam criteria (see h1_net_score.py)."""
-    df = pd.read_sql_query("SELECT post_id, content, author_id FROM comments", con)
+    # Read the comments in chunks. Keep a 64-bit hash of each text and author, not the
+    # string, because the text of all comments does not fit in memory on the large DBs.
+    # Copy post_id: the column is a view that keeps the full chunk in memory.
+    def _hash(s):
+        return pd.util.hash_pandas_object(s, index=False).astype("UInt64").mask(s.isna())
+    parts = [pd.DataFrame({"post_id": ch["post_id"].copy(),
+                           "content": _hash(ch["content"]),
+                           "author_id": _hash(ch["author_id"])})
+             for ch in pd.read_sql_query("SELECT post_id, content, author_id FROM comments",
+                                         con, chunksize=1_000_000)]
+    df = pd.concat(parts, ignore_index=True)
+    del parts
     g = df.groupby("post_id")
     s = g.agg(n=("content", "size"), uc=("content", "nunique"), ua=("author_id", "nunique"))
     s = s[s["n"] >= 5]
@@ -104,42 +98,45 @@ def make_figure(size, up, dn, has_dn):
     """Three panels in the Figure-3a style: (a) up- vs downvote scaling,
     (b) probability of being downvoted, (c) downvote intensity (zeros dropped).
     Panels (b)x(c) decompose the keep-zeros downvote slope shown in (a)."""
-    _style()
-    fig, ax = plt.subplots(1, 3, figsize=(15, 4.3))
+    setup_style()
+    fig, ax = plt.subplots(1, 3, figsize=(FIG_WIDTH, 3.8))
+    c_up, c_dn = QUANTITY_COLORS["upvotes"], QUANTITY_COLORS["downvotes"]
 
     # (a) average upvotes (with 10-90% band) and average downvotes vs size
     xu, yu, ulo, uhi = bin_and_average(size, up)
     xd, yd, _, _ = bin_and_average(size, dn)
-    eu = _fitline(ax[0], xu, yu, COLORS["orange"])
-    ax[0].errorbar(xu, yu, yerr=[np.clip(yu - ulo, 0, None), np.clip(uhi - yu, 0, None)],
-                   fmt="o", color=COLORS["orange"], markersize=5, capsize=2, alpha=.85,
-                   label=f"upvotes  (β = {eu:.2f})")
-    ed = _fitline(ax[0], xd, yd, COLORS["blue"])
-    ax[0].plot(xd, yd, "s", color=COLORS["blue"], markersize=5, alpha=.85,
-               label=f"downvotes  (β = {ed:.2f})")
+    eu = _fitline(ax[0], xu, yu, COLORS["grey"])
+    h_up = ax[0].errorbar(xu, yu, yerr=[np.clip(yu - ulo, 0, None), np.clip(uhi - yu, 0, None)],
+                          fmt="o", color=c_up, markersize=5, capsize=2, alpha=.85,
+                          label=f"Upvotes (β = {eu:.2f})")
+    ed = _fitline(ax[0], xd, yd, COLORS["grey"])
+    h_dn, = ax[0].plot(xd, yd, "s", color=c_dn, markersize=5, alpha=.85,
+                       label=f"Downvotes (β = {ed:.2f})")
     ax[0].set(xlabel="Discussion tree size (comments)", ylabel="Average votes per post",
-              title="(a) upvotes vs downvotes scaling")
-    _log_axes(ax[0]); _panel(ax[0], "a"); ax[0].legend(loc="upper left")
+              title="Upvotes and downvotes")
+    format_axis_log(ax[0]); add_panel_label(ax[0], "a")
+    ax[0].legend(handles=[h_up, h_dn], loc="upper left")
 
     # (b) probability of receiving >=1 downvote vs size
     cen_p, frac_p = binned_fraction(size, has_dn)
-    ep = _fitline(ax[1], cen_p, frac_p, COLORS["red"])
-    ax[1].plot(cen_p, frac_p, "o", color=COLORS["red"], markersize=5, alpha=.85,
-               label=f"P(downvote > 0)  (slope {ep:+.2f})")
+    ep = _fitline(ax[1], cen_p, frac_p, COLORS["grey"])
+    ax[1].plot(cen_p, frac_p, "o", color=c_dn, markersize=5, alpha=.85,
+               label=f"Slope = {ep:+.2f}")
     ax[1].set(xlabel="Discussion tree size (comments)",
-              ylabel="P(post has ≥1 downvote)", title="(b) probability of being downvoted")
-    _log_axes(ax[1]); _panel(ax[1], "b"); ax[1].legend(loc="upper left")
+              ylabel="Probability of ≥ 1 downvote", title="Probability of a downvote")
+    format_axis_log(ax[1]); add_panel_label(ax[1], "b"); ax[1].legend(loc="upper left")
 
     # (c) downvote intensity among downvoted posts only (zeros dropped)
     xi, yi, ilo, ihi = bin_and_average(size[has_dn], dn[has_dn])
-    ei = _fitline(ax[2], xi, yi, COLORS["green"])
+    ei = _fitline(ax[2], xi, yi, COLORS["grey"])
     ax[2].errorbar(xi, yi, yerr=[np.clip(yi - ilo, 0, None), np.clip(ihi - yi, 0, None)],
-                   fmt="o", color=COLORS["green"], markersize=5, capsize=2, alpha=.85,
-                   label=f"downvoted posts  (β = {ei:.2f})")
+                   fmt="o", color=c_dn, markersize=5, capsize=2, alpha=.85,
+                   label=f"Downvoted posts only (β = {ei:.2f})")
     ax[2].set(xlabel="Discussion tree size (comments)",
-              ylabel="Average downvotes (downvoted only)",
-              title="(c) downvote intensity, zeros dropped")
-    _log_axes(ax[2]); _panel(ax[2], "c"); ax[2].legend(loc="upper left")
+              ylabel="Average downvotes",
+              title="Downvote intensity")
+    format_axis_log(ax[2]); add_panel_label(ax[2], "c"); ax[2].legend(loc="upper left")
+    plain_log_ticks(ax[2], "y")
 
     fig.tight_layout()
     os.makedirs(FIGDIR, exist_ok=True)

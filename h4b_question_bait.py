@@ -39,7 +39,18 @@ CUTOFF = os.environ.get("MOLTBOOK_CUTOFF", "2026-02-09")   # exclusive upper bou
 
 
 def spam_post_ids(con):
-    df = pd.read_sql_query("SELECT post_id, content, author_id FROM comments", con)
+    # Read the comments in chunks. Keep a 64-bit hash of each text and author, not the
+    # string, because the text of all comments does not fit in memory on the large DBs.
+    # Copy post_id: the column is a view that keeps the full chunk in memory.
+    def _hash(s):
+        return pd.util.hash_pandas_object(s, index=False).astype("UInt64").mask(s.isna())
+    parts = [pd.DataFrame({"post_id": ch["post_id"].copy(),
+                           "content": _hash(ch["content"]),
+                           "author_id": _hash(ch["author_id"])})
+             for ch in pd.read_sql_query("SELECT post_id, content, author_id FROM comments",
+                                         con, chunksize=1_000_000)]
+    df = pd.concat(parts, ignore_index=True)
+    del parts
     g = df.groupby("post_id")
     s = g.agg(n=("content", "size"), uc=("content", "nunique"),
               ua=("author_id", "nunique"))
@@ -55,6 +66,8 @@ def spam_post_ids(con):
 
 # beta computed with the paper's own code (see paper_beta.py)
 from paper_beta import fit_beta
+# figure style of the paper's main figures (see plot_style.py)
+from plot_style import setup_style, add_panel_label, COLORS, QUANTITY_COLORS, FIG_WIDTH
 
 
 def main():
@@ -154,25 +167,35 @@ def main():
               f"mean qfrac={qf[mk].mean():.3f}  mean up/comment={ (up[mk]/size[mk]).mean():.3f}")
 
     # ---- figure ----
-    fig, ax = plt.subplots(1, 3, figsize=(15, 4.3))
-    ax[0].plot(centers, bup, "o-", color="#1f77b4", label="upvotes")
-    ax[0].plot(centers, brep, "s-", color="#d62728", label="direct replies")
-    ax[0].axhline(1.0, ls=":", color="black"); ax[0].axhline(0.70, ls="--", color="grey")
-    ax[0].set(xlabel="comment question-rate", ylabel="beta vs size",
-              title="(a) question-rate moderates the upvote exponent")
-    ax[0].legend(); ax[0].grid(alpha=.3)
+    setup_style()
+    fig, ax = plt.subplots(1, 3, figsize=(FIG_WIDTH, 3.8))
+    b_up_all = fit_beta(size, up)[0]
+    ax[0].plot(centers, bup, "o-", color=QUANTITY_COLORS["upvotes"], label="Upvotes")
+    ax[0].plot(centers, brep, "s-", color=QUANTITY_COLORS["direct_replies"],
+               label="Direct replies")
+    ax[0].axhline(1.0, ls=":", color=COLORS["black"], label="Linear (β = 1)")
+    ax[0].axhline(b_up_all, ls="--", color=COLORS["black"],
+                  label=f"Upvotes, all posts (β = {b_up_all:.2f})")
+    # space for the legend above the highest line, so that it covers no data
+    lo = min(min(bup), min(brep), b_up_all) - 0.03
+    hi = max(1.0, max(bup), max(brep))
+    ax[0].set(xlabel="Comment question rate", ylabel="Exponent β (vs size)",
+              title="Exponent β by question rate", ylim=(lo, hi + 0.7 * (hi - lo)))
+    ax[0].legend(loc="upper center"); ax[0].grid(alpha=.3); add_panel_label(ax[0], "a")
     # efficiency binned
     qb = pd.qcut(qf, 12, labels=False, duplicates="drop")
     xs = [qf[qb == i].mean() for i in range(qb.max() + 1)]
     ys = [(up[qb == i] / size[qb == i]).mean() for i in range(qb.max() + 1)]
-    ax[1].plot(xs, ys, "o-", color="#2ca02c")
-    ax[1].set(xlabel="comment question-rate", ylabel="mean upvotes / comment",
-              title="(b) upvote efficiency vs question-rate"); ax[1].grid(alpha=.3)
+    ax[1].plot(xs, ys, "o-", color=QUANTITY_COLORS["upvotes"])
+    ax[1].set(xlabel="Comment question rate", ylabel="Mean upvotes per comment",
+              title="Upvotes per comment"); ax[1].grid(alpha=.3)
+    add_panel_label(ax[1], "b")
     # gap
     gap = np.array(brep) - np.array(bup)
-    ax[2].plot(centers, gap, "o-", color="#9467bd")
-    ax[2].set(xlabel="comment question-rate", ylabel="beta_reply - beta_upvote",
-              title="(c) voting/replying gap widens with question-rate"); ax[2].grid(alpha=.3)
+    ax[2].plot(centers, gap, "o-", color=COLORS["purple"])
+    ax[2].set(xlabel="Comment question rate", ylabel="β(direct replies) − β(upvotes)",
+              title="Gap between the exponents"); ax[2].grid(alpha=.3)
+    add_panel_label(ax[2], "c")
     fig.tight_layout()
     os.makedirs(FIGDIR, exist_ok=True)
     out = os.path.join(FIGDIR, "h4b_question_bait.pdf")

@@ -44,7 +44,18 @@ GRID = np.array([2, 4, 6, 9, 12, 18, 24, 36, 48, 60, 72], float)
 
 
 def spam_post_ids(con):
-    df = pd.read_sql_query("SELECT post_id, content, author_id FROM comments", con)
+    # Read the comments in chunks. Keep a 64-bit hash of each text and author, not the
+    # string, because the text of all comments does not fit in memory on the large DBs.
+    # Copy post_id: the column is a view that keeps the full chunk in memory.
+    def _hash(s):
+        return pd.util.hash_pandas_object(s, index=False).astype("UInt64").mask(s.isna())
+    parts = [pd.DataFrame({"post_id": ch["post_id"].copy(),
+                           "content": _hash(ch["content"]),
+                           "author_id": _hash(ch["author_id"])})
+             for ch in pd.read_sql_query("SELECT post_id, content, author_id FROM comments",
+                                         con, chunksize=1_000_000)]
+    df = pd.concat(parts, ignore_index=True)
+    del parts
     g = df.groupby("post_id")
     s = g.agg(n=("content", "size"), uc=("content", "nunique"),
               ua=("author_id", "nunique"))
@@ -60,6 +71,8 @@ def spam_post_ids(con):
 
 # beta computed with the paper's own code (see paper_beta.py)
 from paper_beta import fit_beta
+# figure style of the paper's main figures (see plot_style.py)
+from plot_style import setup_style, add_panel_label, COLORS, QUANTITY_COLORS, FIG_WIDTH
 
 
 def main():
@@ -72,7 +85,7 @@ def main():
 
     print("Loading posts + snapshot coverage...")
     posts = pd.read_sql_query(
-        f"SELECT id, created_at FROM posts "
+        f"SELECT id, created_at, upvotes, comment_count FROM posts "
         f"WHERE created_at >= '{START}' AND created_at < '{CUTOFF}'", con)
     agg = pd.read_sql_query(
         "SELECT post_id, COUNT(*) n, MIN(recorded_at) first_rec, "
@@ -80,6 +93,13 @@ def main():
 
     print("Computing spam filter (reads all comments)...")
     spam = spam_post_ids(con)
+
+    # crawl-time beta of all non-spam posts in the window (the H1 baseline), the
+    # reference line of panel (b)
+    base = posts[~posts["id"].isin(spam)]
+    b_crawl, _ = fit_beta(base["comment_count"].to_numpy(float),
+                          base["upvotes"].to_numpy(float))
+    print(f"  crawl-time beta (all non-spam posts): {b_crawl:.3f}")
 
     cov = posts.merge(agg, left_on="id", right_on="post_id", how="inner")
     cov = cov[~cov["id"].isin(spam)].copy()
@@ -172,21 +192,25 @@ def main():
         b, nb = fit_beta(C[t].to_numpy(), U[t].to_numpy())
         betas.append(b)
         print(f"  age {t:5.0f}h : beta = {b:.3f}  [{nb} bins]")
-    print(f"  (H3: beta drifts toward the crawl-time ~0.70 as upvotes saturate)")
+    print(f"  (H3: beta drifts toward the crawl-time {b_crawl:.2f} as upvotes saturate)")
 
     # ---- figure ----
-    fig, ax = plt.subplots(1, 2, figsize=(11, 4.2))
-    ax[0].plot(GRID, mu.values, "o-", label="upvotes", color="#1f77b4")
-    ax[0].plot(GRID, mc.values, "s-", label="comments", color="#d62728")
-    ax[0].set(xlabel="post age (h)", ylabel="mean fraction of 72h value",
-              title="(a) accumulation: upvotes saturate vs comments")
-    ax[0].axvline(24, ls=":", color="grey"); ax[0].legend(); ax[0].grid(alpha=.3)
-    ax[1].plot(GRID, betas, "o-", color="#2ca02c")
-    ax[1].axhline(0.70, ls="--", color="grey", label="crawl-time ~0.70")
-    ax[1].axhline(1.0, ls=":", color="black", label="linear")
-    ax[1].set(xlabel="post age at measurement (h)", ylabel="beta (upvotes vs comments)",
-              title="(b) cross-sectional beta vs age")
-    ax[1].legend(); ax[1].grid(alpha=.3)
+    setup_style()
+    fig, ax = plt.subplots(1, 2, figsize=(FIG_WIDTH, 4.5))
+    ax[0].plot(GRID, mu.values, "o-", label="Upvotes", color=QUANTITY_COLORS["upvotes"])
+    ax[0].plot(GRID, mc.values, "s-", label="Comments", color=QUANTITY_COLORS["comments"])
+    ax[0].set(xlabel="Post age (hours)", ylabel="Mean fraction of the 72 h value",
+              title="Accumulation with post age")
+    ax[0].axvline(24, ls=":", color=COLORS["black"])
+    ax[0].legend(); ax[0].grid(alpha=.3); add_panel_label(ax[0], "a")
+    ax[1].plot(GRID, betas, "o-", color=QUANTITY_COLORS["upvotes"], label="Matched age")
+    ax[1].axhline(b_crawl, ls="--", color=COLORS["black"],
+                  label=f"Crawl time (β = {b_crawl:.2f})")
+    ax[1].axhline(1.0, ls=":", color=COLORS["black"], label="Linear (β = 1)")
+    ax[1].set(xlabel="Post age at measurement (hours)",
+              ylabel="Exponent β (upvotes vs comments)",
+              title="Exponent β at matched age")
+    ax[1].legend(); ax[1].grid(alpha=.3); add_panel_label(ax[1], "b")
     fig.tight_layout()
     os.makedirs(FIGDIR, exist_ok=True)
     out = os.path.join(FIGDIR, "h3_saturation.pdf")
